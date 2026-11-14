@@ -10,6 +10,7 @@ UART_HandleTypeDef huart4;
 
 /**
   * @brief Fonction de transmission du moniteur série (implicitement appelée lors d'un printf)
+  * Rôle : redirige la sortie standard (printf) vers l'USART2, donc vers la console série du PC.
   */
 int _write(int file, char *ptr, int len)
 {
@@ -19,6 +20,7 @@ int _write(int file, char *ptr, int len)
 
 /**
   * @brief Timer interne de la carte
+  * Rôle : interruption SysTick (toutes les ms) qui incrémente le compteur de temps utilisé par HAL_GetTick et HAL_Delay.
   */
 void SysTick_Handler(void)
 {
@@ -27,6 +29,8 @@ void SysTick_Handler(void)
 
 /**
   * @brief Initialisation I2C
+  * Rôle : active les horloges, configure les broches PB8 (SCL) et PB9 (SDA) en open-drain avec pull-up
+  * et initialise le périphérique I2C1 (utilisé par la RTC et le BME280).
   */
 static void MX_I2C1_Init(void)
 {
@@ -57,6 +61,8 @@ static void MX_I2C1_Init(void)
 
 /**
   * @brief Initialisation SPI
+  * Rôle : configure les broches SPI1 (SCK, MOSI, MISO avec pull-up) et la broche CS de la carte SD,
+  * puis initialise SPI1 en maître (mode 0, 8 bits, vitesse lente par défaut) pour dialoguer avec la carte SD.
   */
 static void MX_SPI1_Init(void)
 {
@@ -105,6 +111,8 @@ static void MX_SPI1_Init(void)
 
 /**
   * @brief Initialisation de l'horloge
+  * Rôle : configure l'horloge système sur l'oscillateur MSI (range 6, soit 4 MHz) et règle les diviseurs
+  * des bus AHB, APB1 et APB2 à 1.
   */
 void SystemClock_Config(void)
 {
@@ -135,6 +143,8 @@ void SystemClock_Config(void)
 
 /**
   * @brief Initialisations des ports UART et de la communication série
+  * Rôle : callback appelé par HAL_UART_Init ; active les horloges et configure les broches
+  * de l'USART2 (console, PA2/PA3) et de l'UART4 (GPS, PA0/PA1).
   */
 void HAL_UART_MspInit(UART_HandleTypeDef *uartHandle)
 {
@@ -170,6 +180,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef *uartHandle)
 
 /**
   * @brief Config UART commune (8N1, TX/RX, sans contrôle de flux)
+  * Rôle : initialise un UART avec la vitesse donnée ; bloque le programme (boucle infinie) si l'initialisation échoue.
   */
 static void uart_init(UART_HandleTypeDef *h, USART_TypeDef *instance, uint32_t baud)
 {
@@ -190,6 +201,11 @@ static void uart_init(UART_HandleTypeDef *h, USART_TypeDef *instance, uint32_t b
     }
 }
 
+/*
+ * Global_Init : initialisation globale du matériel au démarrage.
+ * Lance la HAL, configure l'horloge, puis initialise l'I2C1, le SPI1 et les deux UART
+ * (USART2 pour la console, UART4 à 9600 bauds pour le GPS).
+ */
 void Global_Init(void)
 {
     HAL_Init();

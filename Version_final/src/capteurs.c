@@ -9,6 +9,10 @@
 // Luminosité (ADC1, PA0, 10 bits : 0 à 1023)
 static ADC_HandleTypeDef hadc1;
 
+/*
+ * adc_init : initialise le convertisseur analogique-numérique ADC1 (10 bits) sur la broche PA0
+ * pour lire le capteur de luminosité : configuration de la broche, calibration, choix du canal et du temps d'échantillonnage.
+ */
 void adc_init(void)
 {
     __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -43,6 +47,9 @@ void adc_init(void)
     HAL_ADC_ConfigChannel(&hadc1, &ch);
 }
 
+/*
+ * lumin_read : lance une conversion ADC et renvoie la luminosité mesurée (0 à 1023).
+ */
 uint16_t lumin_read(void)
 {
     HAL_ADC_Start(&hadc1);
@@ -57,6 +64,11 @@ static char line[100], rmc[100], gga[100];
 static uint8_t idx;
 static volatile uint8_t rmc_ready, gga_ready;
 
+/*
+ * gps_rx_byte : reçoit un caractère du GPS (appelée depuis l'interruption de réception UART4).
+ * Assemble les trames NMEA ligne par ligne et ne conserve que les trames RMC (position)
+ * et GGA (altitude), qui seront ensuite analysées par gps_poll.
+ */
 // Appelée à chaque octet reçu du GPS : on ne garde que les trames RMC (position) et GGA (altitude)
 void gps_rx_byte(char c)
 {
@@ -75,6 +87,10 @@ void gps_rx_byte(char c)
     }
 }
 
+/*
+ * split : découpe une chaîne NMEA en champs en remplaçant les virgules par des fins de chaîne.
+ * Les champs vides sont conservés. Retourne le nombre de champs trouvés (max au plus).
+ */
 static int split(char *s, char *f[], int max)   // découpe sur ',' en gardant les champs vides
 {
     int n = 0;
@@ -84,6 +100,10 @@ static int split(char *s, char *f[], int max)   // découpe sur ',' en gardant l
     return n;
 }
 
+/*
+ * to_deg : convertit une coordonnée NMEA (format ddmm.mmmm) en degrés décimaux,
+ * négatifs pour les hémisphères Sud et Ouest.
+ */
 static double to_deg(const char *s, char hemi)  // ddmm.mmmm -> degrés décimaux
 {
     double v = strtod(s, NULL);
@@ -98,6 +118,10 @@ static int  gps_sats;                   // satellites utilisés (trame GGA)
 static char gps_time[7] = "------";    // hhmmss
 static uint32_t last_rmc_tick;
 
+/*
+ * gps_poll : analyse les trames GPS reçues (RMC puis GGA) lorsqu'elles sont prêtes.
+ * Met à jour la validité du fix, l'heure UTC, la latitude, la longitude, l'altitude et le nombre de satellites.
+ */
 void gps_poll(void)
 {
     char *f[12];
@@ -123,11 +147,20 @@ void gps_poll(void)
     }
 }
 
+/*
+ * gps_alive : retourne 1 si le GPS a envoyé une trame RMC depuis moins de max_ms millisecondes
+ * (le GPS « répond »), 0 sinon.
+ */
 int gps_alive(uint32_t max_ms)
 {
     return last_rmc_tick != 0 && HAL_GetTick() - last_rmc_tick <= max_ms;
 }
 
+/*
+ * gps_report : affiche périodiquement l'état du GPS sur la console : absence de données, absence de fix
+ * ou position complète (heure UTC, latitude, longitude, altitude, satellites).
+ * Période multipliée par ECO_FACTOR en mode économique, aucun affichage en configuration.
+ */
 void gps_report(void)
 {
     static uint32_t last_print;

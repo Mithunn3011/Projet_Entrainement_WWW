@@ -5,6 +5,10 @@
 
 extern I2C_HandleTypeDef hi2c1;    // défini dans setup.c
 
+/*
+ * i2c_init : ajuste le timing de l'I2C1 selon la fréquence réelle de PCLK1 (100 kHz pour 80 MHz ou 4 MHz)
+ * et affiche cette fréquence sur la console.
+ */
 // I2C1 (PB8 = SCL, PB9 = SDA) : broches et horloge déjà gérées par setup.c
 void i2c_init(void)
 {
@@ -14,6 +18,10 @@ void i2c_init(void)
     console("I2C : PCLK1 = %lu Hz (timing prevu pour 80 MHz ou 4 MHz)\r\n", (unsigned long)f);
 }
 
+/*
+ * i2c_scan : teste toutes les adresses I2C (1 à 126) et affiche sur la console
+ * celles qui répondent, ce qui permet de vérifier quels modules sont branchés.
+ */
 void i2c_scan(void)                    // liste les modules présents sur le bus
 {
     console("Scan I2C :");
@@ -30,9 +38,20 @@ extern I2C_HandleTypeDef hi2c1;
 
 const char *day_name[] = { "", "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN" };
 
+/*
+ * bcd2bin : convertit un nombre codé en BCD (format de la RTC) en entier binaire.
+ */
 static uint8_t bcd2bin(uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); }
+
+/*
+ * bin2bcd : convertit un entier binaire (0 à 99) en BCD pour l'écrire dans la RTC.
+ */
 static uint8_t bin2bcd(uint8_t v) { return ((v / 10) << 4) | (v % 10); }
 
+/*
+ * rtc_read : lit les 7 registres de la RTC (secondes à année) et remplit la structure DateTime.
+ * Retourne 0 si OK, -1 en cas d'erreur d'accès I2C.
+ */
 static int rtc_read(DateTime *t)              // 0 = OK, -1 = erreur d'accès
 {
     uint8_t r[7];
@@ -48,6 +67,10 @@ static int rtc_read(DateTime *t)              // 0 = OK, -1 = erreur d'accès
     return 0;
 }
 
+/*
+ * rtc_write : écrit la date et l'heure de la structure DateTime dans la RTC (conversion en BCD).
+ * Retourne 0 si OK, -1 en cas d'erreur.
+ */
 int rtc_write(const DateTime *t)       // écrire les secondes avec le bit 7 à 0 démarre l'horloge
 {
     uint8_t r[7] = { bin2bcd(t->s), bin2bcd(t->m), bin2bcd(t->h), t->dow,
@@ -55,6 +78,11 @@ int rtc_write(const DateTime *t)       // écrire les secondes avec le bit 7 à 
     return HAL_I2C_Mem_Write(&hi2c1, RTC_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT, r, 7, 50) == HAL_OK ? 0 : -1;
 }
 
+/*
+ * rtc_load : lit la RTC avant une modification partielle de la date ou de l'heure.
+ * Si les valeurs lues sont absurdes (module neuf), repart d'une date valide (01/01/2000 00:00:00).
+ * Retourne 0 si OK, -1 en cas d'erreur d'accès.
+ */
 // Lit l'heure avant modification ; si le module est neuf (valeurs absurdes), repart d'une date valide
 int rtc_load(DateTime *t)
 {
@@ -69,6 +97,10 @@ int rtc_load(DateTime *t)
 DateTime now_dt;
 uint8_t rtc_fail = 1;                  // 1 tant que la RTC n'a pas répondu
 
+/*
+ * rtc_poll : lit la RTC une fois par seconde, mémorise l'heure dans now_dt
+ * et met à jour l'indicateur d'erreur rtc_fail.
+ */
 // Lit la RTC une fois par seconde et mémorise le résultat
 void rtc_poll(void)
 {
@@ -81,6 +113,10 @@ void rtc_poll(void)
     rtc_fail = (rtc_read(&now_dt) != 0);
 }
 
+/*
+ * timestamp : écrit dans buf la date et l'heure courantes au format "JJ/MM/AAAA HH:MM:SS"
+ * (ou "NA" si la RTC est en erreur).
+ */
 // Horodatage texte pour les messages et, plus tard, les lignes du fichier SD
 void timestamp(char *buf, size_t n)
 {
@@ -104,6 +140,11 @@ static int16_t  dig_H2, dig_H4, dig_H5;
 static int8_t   dig_H6;
 static int32_t  t_fine;
 
+/*
+ * bme_init : détecte le BME280 sur le bus I2C (adresse 0x76 ou 0x77), vérifie son identifiant (0x60),
+ * lit ses coefficients de calibration et configure la mesure (humidité, température, pression x1, mode normal).
+ * Retourne 0 si OK, -1 si le capteur est introuvable, -2 si la puce n'est pas un BME280.
+ */
 int bme_init(void)
 {
     uint8_t id = 0, c[24], h1, h[7];
@@ -140,6 +181,10 @@ int bme_init(void)
 }
 
 // Formules de compensation du datasheet Bosch (entiers)
+/*
+ * comp_T : convertit la valeur brute de température du BME280 en centièmes de °C
+ * (formule du datasheet Bosch) et calcule t_fine, nécessaire à la compensation de la pression et de l'humidité.
+ */
 static int32_t comp_T(int32_t adc)
 {
     int32_t v1 = (((adc >> 3) - ((int32_t)dig_T1 << 1)) * dig_T2) >> 11;
@@ -148,6 +193,10 @@ static int32_t comp_T(int32_t adc)
     return (t_fine * 5 + 128) >> 8;                 // centièmes de °C
 }
 
+/*
+ * comp_P : convertit la valeur brute de pression du BME280 en Pa x 256 (formule du datasheet Bosch,
+ * calcul sur 64 bits). Doit être appelée après comp_T. Renvoie 0 en cas de division par zéro évitée.
+ */
 static uint32_t comp_P(int32_t adc)
 {
     int64_t v1 = (int64_t)t_fine - 128000;
@@ -165,6 +214,10 @@ static uint32_t comp_P(int32_t adc)
     return (uint32_t)p;                             // Pa x 256
 }
 
+/*
+ * comp_H : convertit la valeur brute d'humidité du BME280 en %HR x 1024 (formule du datasheet Bosch),
+ * bornée entre 0 et 100 %. Doit être appelée après comp_T.
+ */
 static uint32_t comp_H(int32_t adc)
 {
     int32_t v = t_fine - 76800;
@@ -176,6 +229,11 @@ static uint32_t comp_H(int32_t adc)
     return (uint32_t)(v >> 12);                     // %HR x 1024
 }
 
+/*
+ * bme_read : lit les mesures brutes du BME280 (8 octets à partir du registre 0xF7), les compense
+ * et renvoie la température (°C), la pression (hPa) et l'humidité (%HR).
+ * Retourne 0 si OK, -1 en cas d'erreur I2C.
+ */
 int bme_read(float *t, float *p, float *h)
 {
     uint8_t d[8];

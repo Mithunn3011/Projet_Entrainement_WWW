@@ -12,6 +12,10 @@
 #define DAT_PORT GPIOA
 #define DAT_PIN  GPIO_PIN_8    // D7 : données (DI)
 
+/*
+ * led_init : configure les broches d'horloge et de données de la LED RGB (protocole série type Grove Chainable LED)
+ * en sorties push-pull.
+ */
 void led_init(void)
 {
     GPIO_InitTypeDef gpio = {0};
@@ -21,6 +25,10 @@ void led_init(void)
 }
 
 /* ---------- LED ---------- */
+/*
+ * send_byte : envoie un octet à la LED bit par bit (bit de poids fort en premier)
+ * en faisant battre l'horloge et en positionnant la ligne de données.
+ */
 static void send_byte(uint8_t b)
 {
     for (int i = 0; i < 8; i++) {
@@ -31,12 +39,20 @@ static void send_byte(uint8_t b)
     }
 }
 
+/*
+ * send_frame : envoie la trame de 4 octets (préfixe + B + G + R) qui définit la couleur d'une LED.
+ * Le préfixe contient les 2 bits de poids fort inversés de chaque composante (exigence du protocole).
+ */
 static void send_frame(uint8_t r, uint8_t g, uint8_t b)
 {
     uint8_t prefix = 0xC0 | ((~b & 0xC0) >> 2) | ((~g & 0xC0) >> 4) | ((~r & 0xC0) >> 6);
     send_byte(prefix); send_byte(b); send_byte(g); send_byte(r);
 }
 
+/*
+ * leds_set_all : règle la couleur (R, G, B) de toutes les LED de la chaîne.
+ * Envoie une trame de début (4 octets nuls), la couleur de chaque LED, puis une trame de fin.
+ */
 void leds_set_all(uint8_t r, uint8_t g, uint8_t b)
 {
     for (int i = 0; i < 4; i++) send_byte(0);
@@ -53,11 +69,18 @@ void leds_set_all(uint8_t r, uint8_t g, uint8_t b)
 Button button_green = { GREEN_PORT, GREEN_PIN, 0, 0, 0 };
 Button button_red   = { RED_PORT,   RED_PIN,   0, 0, 0 };
 
+/*
+ * button_pressed : retourne 1 si le bouton est actuellement enfoncé (niveau bas), 0 sinon.
+ */
 int button_pressed(const Button *b)
 {
     return HAL_GPIO_ReadPin(b->port, b->pin) == PRESSED;
 }
 
+/*
+ * button_held : détecte un appui long. Retourne 1 une seule fois quand le bouton a été maintenu
+ * pendant HOLD_MS ; il faut le relâcher pour que la détection soit à nouveau possible.
+ */
 // Vrai une seule fois quand le bouton est maintenu HOLD_MS (re-armé au relâchement)
 int button_held(Button *b)
 {
@@ -68,6 +91,10 @@ int button_held(Button *b)
     return 0;
 }
 
+/*
+ * buttons_init : configure les boutons vert et rouge en entrées avec résistance de pull-up
+ * (ils sont actifs à l'état bas).
+ */
 void buttons_init(void)                       // actifs à l'état bas
 {
     GPIO_InitTypeDef gpio = {0};
@@ -99,6 +126,10 @@ static Mode prev_mode;
 uint32_t mode_since;
 
 
+/*
+ * set_mode : change le mode de fonctionnement. Mémorise l'instant du changement, ferme le fichier SD
+ * si on passe en maintenance, allume la LED à la couleur du mode et affiche le nouveau mode sur la console.
+ */
 void set_mode(Mode m)
 {
     mode = m;
@@ -108,6 +139,11 @@ void set_mode(Mode m)
     console("Mode : %s\r\n", mode_name[m]);
 }
 
+/*
+ * update_mode : gère les transitions entre modes selon les appuis longs sur les boutons :
+ * standard <-> économique (bouton vert), standard/économique -> maintenance et retour (bouton rouge),
+ * et retour automatique de configuration vers standard après CONFIG_TIMEOUT d'inactivité.
+ */
 void update_mode(void)
 {
     switch (mode) {
@@ -146,6 +182,10 @@ static const ErrInfo err_info[ERR_COUNT] = {
 
 static uint8_t err_mask;                      // bit e = erreur e présente
 
+/*
+ * error_set : active ou désactive une erreur dans le masque d'erreurs.
+ * Affiche un message sur la console uniquement quand l'erreur apparaît (front montant).
+ */
 void error_set(ErrCode e, int on)
 {
     uint8_t bit = 1u << e;
@@ -154,6 +194,11 @@ void error_set(ErrCode e, int on)
     else    err_mask &= ~bit;
 }
 
+/*
+ * error_led : met à jour la LED pour signaler l'erreur la plus prioritaire en la faisant clignoter
+ * avec ses deux couleurs ; sans erreur, la LED reprend la couleur du mode courant.
+ * Met aussi à jour l'erreur RTC à partir de l'état de l'horloge.
+ */
 // Affiche l'erreur la plus prioritaire ; sans erreur, la LED reprend la couleur du mode
 void error_led(void)
 {

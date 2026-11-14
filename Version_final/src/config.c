@@ -18,6 +18,10 @@ Params params = DEFAULT_PARAMS;
 
 typedef struct { uint32_t magic; Params p; uint32_t check; } Stored;
 
+/*
+ * checksum : calcule une somme de contrôle FNV-1a sur la structure de paramètres,
+ * pour détecter une sauvegarde flash corrompue ou absente.
+ */
 static uint32_t checksum(const Params *p)   // FNV-1a
 {
     const uint8_t *b = (const uint8_t *)p;
@@ -26,6 +30,10 @@ static uint32_t checksum(const Params *p)   // FNV-1a
     return h;
 }
 
+/*
+ * params_load : charge les paramètres depuis la flash au démarrage.
+ * Si la sauvegarde est absente ou invalide (mauvais code magique ou somme de contrôle), les valeurs par défaut sont utilisées.
+ */
 void params_load(void)
 {
     const Stored *s = (const Stored *)PARAMS_ADDR;
@@ -35,6 +43,11 @@ void params_load(void)
         params = (Params)DEFAULT_PARAMS;
 }
 
+/*
+ * params_save : sauvegarde les paramètres courants en flash : efface la page dédiée,
+ * puis programme la structure (code magique, paramètres, somme de contrôle) par mots de 64 bits.
+ * Affiche une erreur sur la console si l'opération échoue.
+ */
 void params_save(void)
 {
     uint64_t buf[(sizeof(Stored) + 7) / 8];
@@ -76,6 +89,11 @@ static const ParamDef param_table[] = {
     { "PRESSURE_MAX",  &params.pressure_max, PRESSURE_VALUE_MIN, PRESSURE_VALUE_MAX },
 };
 
+/*
+ * thresholds_ok : vérifie la cohérence des seuils : chaque seuil bas doit rester strictement inférieur
+ * au seuil haut correspondant (luminosité, température, température d'hygrométrie, pression).
+ * Retourne 1 si tout est cohérent, 0 sinon.
+ */
 // Un seuil bas doit rester strictement sous le seuil haut correspondant
 static int thresholds_ok(void)
 {
@@ -83,6 +101,12 @@ static int thresholds_ok(void)
            params.hygr_mint < params.hygr_maxt && params.pressure_min < params.pressure_max;
 }
 
+/*
+ * param_command : traite une commande "NOM=valeur" pour un paramètre numérique de la table.
+ * Vérifie que la valeur est un entier dans la plage autorisée et que les seuils restent cohérents,
+ * l'applique, la sauvegarde en flash et répond sur la console.
+ * Retourne 1 si le nom est dans la table (commande traitée, même en cas d'erreur), 0 sinon.
+ */
 // Valide "NOM=valeur", applique et sauvegarde ; retourne 0 si le nom n'est pas dans la table
 static int param_command(const char *name, const char *val)
 {
@@ -111,6 +135,10 @@ static int param_command(const char *name, const char *val)
 }
 
 /* ---------- Commandes de date et d'heure ---------- */
+/*
+ * cmd_clock : commande CLOCK=HH:MM:SS. Vérifie le format, lit la RTC, remplace l'heure
+ * puis réécrit la RTC. Conserve la date en cours.
+ */
 static void cmd_clock(const char *v)          // CLOCK=HH:MM:SS
 {
     int h, m, s;
@@ -125,6 +153,10 @@ static void cmd_clock(const char *v)          // CLOCK=HH:MM:SS
     else console("RTC : erreur d'ecriture\r\n");
 }
 
+/*
+ * cmd_date : commande DATE=MM,JJ,AAAA. Vérifie le format (année 2000 à 2099), lit la RTC,
+ * remplace la date puis réécrit la RTC. Conserve l'heure en cours.
+ */
 static void cmd_date(const char *v)           // DATE=MOIS,JOUR,ANNEE
 {
     int mo, d, y;
@@ -139,6 +171,10 @@ static void cmd_date(const char *v)           // DATE=MOIS,JOUR,ANNEE
     else console("RTC : erreur d'ecriture\r\n");
 }
 
+/*
+ * cmd_day : commande DAY=MON..SUN. Convertit le nom du jour de la semaine en numéro (1 à 7),
+ * lit la RTC, remplace le jour de la semaine puis réécrit la RTC.
+ */
 static void cmd_day(const char *v)            // DAY=MON..SUN
 {
     DateTime t;
@@ -152,6 +188,12 @@ static void cmd_day(const char *v)            // DAY=MON..SUN
     else console("RTC : erreur d'ecriture\r\n");
 }
 
+/*
+ * config_command : interprète une ligne de commande reçue en mode configuration.
+ * Sépare le nom et la valeur au signe '=', puis exécute : VERSION, RESET (valeurs par défaut),
+ * un paramètre numérique de la table, CLOCK, DATE, DAY ou TIME (affichage de la date et de l'heure).
+ * Répond « Commande inconnue » sinon.
+ */
 static void config_command(char *s)
 {
     char *val = strchr(s, '=');
@@ -181,6 +223,11 @@ static void config_command(char *s)
         console("Commande inconnue : %s\r\n", s);
 }
 
+/*
+ * console_poll : vérifie si une ligne de commande complète a été reçue sur la console.
+ * En mode configuration, l'exécute (et relance le délai d'inactivité) ; dans les autres modes, la refuse.
+ * Libère ensuite le tampon de commande.
+ */
 void console_poll(void)
 {
     char *cmd = console_cmd();

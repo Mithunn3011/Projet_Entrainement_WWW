@@ -23,12 +23,18 @@ static uint32_t sectors;
 static int      last_error;
 
 /* ---------- SPI bas niveau ---------- */
+/*
+ * spi_speed : change la vitesse du bus SPI en modifiant le prédiviseur et en réinitialisant le périphérique.
+ */
 static void spi_speed(uint32_t prescaler)
 {
     hspi1.Init.BaudRatePrescaler = prescaler;
     HAL_SPI_Init(&hspi1);
 }
 
+/*
+ * xfer : envoie un octet sur le SPI et renvoie l'octet reçu simultanément (le SPI est full-duplex).
+ */
 static uint8_t xfer(uint8_t tx)
 {
     uint8_t rx = 0xFF;
@@ -36,12 +42,19 @@ static uint8_t xfer(uint8_t tx)
     return rx;
 }
 
+/*
+ * deselect : désactive la carte (CS haut) et envoie un octet d'horloge pour qu'elle libère la ligne MISO.
+ */
 static void deselect(void)
 {
     HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
     xfer(0xFF);                                   // libère la ligne MISO
 }
 
+/*
+ * select_card : active la carte (CS bas) puis attend qu'elle ne soit plus occupée (MISO à 0xFF).
+ * Retourne 1 si la carte est prête, 0 en cas de timeout de 500 ms (la carte est alors désélectionnée).
+ */
 static int select_card(void)
 {
     HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_RESET);
@@ -52,6 +65,10 @@ static int select_card(void)
     return 1;
 }
 
+/*
+ * send_cmd : envoie une commande SD (6 octets : commande, argument 32 bits, CRC) et renvoie la réponse R1.
+ * Les commandes applicatives (ACMD) sont automatiquement précédées de CMD55.
+ */
 // Envoie une commande et renvoie la réponse R1 (0xFF = pas de réponse). CS reste bas.
 static uint8_t send_cmd(uint8_t cmd, uint32_t arg)
 {
@@ -76,6 +93,10 @@ static uint8_t send_cmd(uint8_t cmd, uint32_t arg)
     return r;
 }
 
+/*
+ * wait_token : attend le jeton de début de données 0xFE envoyé par la carte avant un bloc de données.
+ * Retourne 0 si le jeton est reçu (délai max 200 ms), -1 sinon.
+ */
 static int wait_token(void)                       // attend le jeton 0xFE qui précède les données
 {
     uint32_t t = HAL_GetTick();
@@ -85,6 +106,10 @@ static int wait_token(void)                       // attend le jeton 0xFE qui pr
 }
 
 /* ---------- Capacité (registre CSD) ---------- */
+/*
+ * read_capacity : lit le registre CSD de la carte (CMD9) et en déduit le nombre de secteurs de 512 octets,
+ * selon le format CSD v2 (SDHC/SDXC) ou v1 (SD <= 2 Go). Retourne 0 si OK, -1 en cas d'erreur.
+ */
 static int read_capacity(void)
 {
     uint8_t csd[16];
@@ -107,6 +132,12 @@ static int read_capacity(void)
 }
 
 /* ---------- API ---------- */
+/*
+ * sd_init_once : une tentative d'initialisation de la carte SD en mode SPI :
+ * séquence d'horloges, CMD0 (reset), CMD8 (détection v2), ACMD41 (initialisation), CMD58 (OCR, type SDHC),
+ * CMD16 (taille de bloc), passage à vitesse rapide puis lecture de la capacité.
+ * Retourne ERR_NONE ou un code d'erreur décrivant l'étape qui a échoué.
+ */
 static int sd_init_once(void)
 {
     uint8_t ocr[4];
@@ -149,6 +180,10 @@ static int sd_init_once(void)
     return ERR_NONE;
 }
 
+/*
+ * sd_init : initialise la carte SD en réessayant jusqu'à 3 fois en cas d'échec.
+ * Retourne le dernier code d'erreur (0 = succès).
+ */
 // Après un reset du processeur seul, la carte peut être restée dans un état intermédiaire : on réessaie
 int sd_init(void)
 {
@@ -160,8 +195,14 @@ int sd_init(void)
     return last_error;
 }
 
+/*
+ * sd_last_error : renvoie le code de la dernière erreur d'initialisation de la carte.
+ */
 int sd_last_error(void) { return last_error; }
 
+/*
+ * sd_error_text : convertit un code d'erreur d'initialisation en message lisible pour la console.
+ */
 const char *sd_error_text(int code)
 {
     switch (code) {
@@ -176,6 +217,9 @@ const char *sd_error_text(int code)
     }
 }
 
+/*
+ * sd_type_name : renvoie le nom du type de carte détecté (SD v1, SD v2, SDHC/SDXC ou "aucune").
+ */
 const char *sd_type_name(void)
 {
     switch (card_type) {
@@ -186,8 +230,15 @@ const char *sd_type_name(void)
     }
 }
 
+/*
+ * sd_sector_count : renvoie la capacité de la carte en nombre de secteurs de 512 octets.
+ */
 uint32_t sd_sector_count(void) { return sectors; }
 
+/*
+ * sd_read_block : lit un bloc de SD_BLOCK octets (CMD17) à l'adresse lba dans buf.
+ * Retourne 0 si OK, -1 en cas d'erreur.
+ */
 int sd_read_block(uint32_t lba, uint8_t *buf)
 {
     uint32_t addr = (card_type == T_SDHC) ? lba : lba * SD_BLOCK;   // SDHC : adresse en blocs
@@ -197,6 +248,11 @@ int sd_read_block(uint32_t lba, uint8_t *buf)
     deselect();
     return 0;
 }
+
+/*
+ * sd_write_block : écrit un bloc de SD_BLOCK octets (CMD24) à l'adresse lba, vérifie que la carte
+ * accepte les données puis attend la fin de l'écriture. Retourne 0 si OK, -1 en cas d'erreur.
+ */
 int sd_write_block(uint32_t lba, const uint8_t *buf)
 {
     uint32_t addr = (card_type == T_SDHC) ? lba : lba * SD_BLOCK;
@@ -217,6 +273,9 @@ int sd_write_block(uint32_t lba, const uint8_t *buf)
 /* ---------- Lien avec FatFs (diskio) ---------- */
 static DSTATUS stat = STA_NOINIT;
 
+/*
+ * disk_initialize : fonction exigée par FatFs. Initialise la carte SD (lecteur 0) et mémorise son état.
+ */
 DSTATUS disk_initialize(BYTE pdrv)
 {
     if (pdrv != 0) return STA_NOINIT;
@@ -224,11 +283,17 @@ DSTATUS disk_initialize(BYTE pdrv)
     return stat;
 }
 
+/*
+ * disk_status : fonction exigée par FatFs. Renvoie l'état du lecteur (0 = prêt, STA_NOINIT = non initialisé).
+ */
 DSTATUS disk_status(BYTE pdrv)
 {
     return pdrv == 0 ? stat : STA_NOINIT;
 }
 
+/*
+ * disk_read : fonction exigée par FatFs. Lit count secteurs à partir de sector dans buff.
+ */
 DRESULT disk_read(BYTE pdrv, BYTE *buff, DWORD sector, UINT count)
 {
     if (pdrv != 0 || stat) return RES_NOTRDY;
@@ -237,6 +302,9 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, DWORD sector, UINT count)
     return RES_OK;
 }
 
+/*
+ * disk_write : fonction exigée par FatFs. Écrit count secteurs à partir de sector depuis buff.
+ */
 DRESULT disk_write(BYTE pdrv, const BYTE *buff, DWORD sector, UINT count)
 {
     if (pdrv != 0 || stat) return RES_NOTRDY;
@@ -245,6 +313,10 @@ DRESULT disk_write(BYTE pdrv, const BYTE *buff, DWORD sector, UINT count)
     return RES_OK;
 }
 
+/*
+ * disk_ioctl : fonction exigée par FatFs. Répond aux commandes de contrôle :
+ * synchronisation, nombre de secteurs, taille d'un secteur et taille d'un bloc d'effacement.
+ */
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
 {
     if (pdrv != 0 || stat) return RES_NOTRDY;

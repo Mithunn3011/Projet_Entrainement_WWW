@@ -23,7 +23,10 @@ static FIL logf;
 static uint8_t log_is_open;
 static char active_name[16];
 
-// Horodatage des fichiers pour FatFs (1980-01-01 si la RTC ne répond pas)
+/*
+ * get_fattime : fonction appelée par FatFs pour horodater les fichiers créés ou modifiés.
+ * Renvoie la date/heure de la RTC au format FAT, ou le 1er janvier 1980 si la RTC ne répond pas.
+ */
 DWORD get_fattime(void)
 {
     if (rtc_fail) return (1UL << 21) | (1UL << 16);
@@ -31,12 +34,20 @@ DWORD get_fattime(void)
            ((DWORD)now_dt.h << 11) | ((DWORD)now_dt.m << 5) | (now_dt.s / 2);
 }
 
+/*
+ * log_name : construit le nom de fichier "AAMMJJ_N.LOG" à partir de la date courante
+ * (ou 000000 si la RTC est en erreur). rev = numéro de révision (0 = fichier actif, 1 à 9 = archives).
+ */
 static void log_name(char *buf, size_t n, int rev)    // "AAMMJJ_N.LOG"
 {
     snprintf(buf, n, "%02u%02u%02u_%d.LOG",
              rtc_fail ? 0 : now_dt.year % 100, rtc_fail ? 0 : now_dt.month, rtc_fail ? 0 : now_dt.day, rev);
 }
 
+/*
+ * log_open : ouvre (ou crée) le fichier du jour et place le curseur à la fin pour ajouter des lignes.
+ * Retourne 0 si OK, -1 en cas d'échec.
+ */
 static int log_open(void)                     // ouvre le fichier du jour en ajout
 {
     log_name(active_name, sizeof(active_name), 0);
@@ -46,11 +57,19 @@ static int log_open(void)                     // ouvre le fichier du jour en ajo
     return 0;
 }
 
+/*
+ * log_start : monte le système de fichiers de la carte SD puis ouvre le fichier du jour.
+ * Retourne 0 si OK, -1 en cas d'échec.
+ */
 static int log_start(void)                    // monte la carte puis ouvre le fichier
 {
     return f_mount(&fs, "", 1) == FR_OK ? log_open() : -1;
 }
 
+/*
+ * log_stop : ferme proprement le fichier ouvert et démonte la carte
+ * (utilisé en cas d'erreur ou en mode maintenance pour pouvoir retirer la carte sans risque).
+ */
 void log_stop(void)
 {
     if (log_is_open) f_close(&logf);
@@ -58,6 +77,10 @@ void log_stop(void)
     f_mount(NULL, "", 0);
 }
 
+/*
+ * log_archive : archive le fichier plein. AAMMJJ_0.LOG est renommé avec la première révision libre (1 à 9)
+ * puis un nouveau fichier du jour est ouvert. Retourne 0 si OK, -1 en cas d'échec.
+ */
 // Fichier plein : AAMMJJ_0.LOG prend la première révision libre (1 à 9) et un nouveau fichier démarre.
 // Avec 9 archives déjà présentes, la plus ancienne (1) est supprimée et les autres sont décalées.
 static int log_archive(void)
@@ -89,6 +112,10 @@ static int log_archive(void)
     return log_open();
 }
 
+/*
+ * sd_has_room : indique s'il reste assez de place sur la carte pour écrire len octets d'un seul bloc
+ * (on évite ainsi d'écrire une ligne tronquée). Retourne 1 si oui, 0 sinon.
+ */
 // Place restante pour len octets ? (sans écrire de ligne tronquée)
 static int sd_has_room(UINT len)
 {
@@ -100,6 +127,11 @@ static int sd_has_room(UINT len)
     return used != 0 && cluster - used >= len;
 }
 
+/*
+ * log_line : écrit une ligne de mesure dans le fichier du jour.
+ * Gère le changement de jour (nouveau fichier), l'archivage si la taille maximale est atteinte,
+ * la détection de carte pleine, et positionne les drapeaux sd_error / sd_full.
+ */
 // Ajoute une ligne au fichier ; en cas d'échec, la carte est remontée au prochain essai
 static void log_line(const char *text)
 {
@@ -124,6 +156,11 @@ static void log_line(const char *text)
     sd_full = 0;
 }
 
+/*
+ * sd_boot : initialisation de la carte SD au démarrage.
+ * Tente de monter la carte, affiche sur la console son type, sa capacité et le fichier actif
+ * (ou la cause de l'erreur), puis met à jour l'erreur SD.
+ */
 void sd_boot(void)
 {
     sd_error = (log_start() != 0);
@@ -133,6 +170,10 @@ void sd_boot(void)
     error_set(ERR_SD_IO, sd_error);
 }
 
+/*
+ * fmt_val : formate une valeur numérique dans un tampon texte avec le format donné,
+ * ou écrit "NA" si la valeur n'est pas disponible (ok = 0).
+ */
 static void fmt_val(char *b, size_t n, int ok, const char *fmt, double v)   // valeur absente = "NA"
 {
     if (ok) snprintf(b, n, fmt, v);
@@ -140,6 +181,11 @@ static void fmt_val(char *b, size_t n, int ok, const char *fmt, double v)   // v
 }
 
 /* ---------- Affichage des capteurs (x ECO_FACTOR en économique) ---------- */
+/*
+ * sensors_report : affiche périodiquement sur la console les mesures du BME280 (température, pression,
+ * humidité) et de la luminosité. La période est multipliée par ECO_FACTOR en mode économique,
+ * et rien n'est affiché en mode configuration.
+ */
 void sensors_report(void)
 {
     static uint32_t last;
@@ -172,6 +218,12 @@ void sensors_report(void)
  * Le BME280 est relu toutes les 200 ms pendant TIMEOUT secondes au plus ; sans réponse, ses valeurs sont "NA"
  * et, après SENSOR_MAX_MISSES mesures de suite en timeout, le capteur est signalé en erreur (idem pour le GPS).
  * Une valeur hors des seuils min/max est enregistrée "NA" et signalée comme incohérente.
+ */
+/*
+ * measure_cycle : machine d'état non bloquante qui réalise une mesure complète à chaque période :
+ * lecture du BME280 (avec nouvelles tentatives jusqu'au timeout), vérification du GPS, contrôle des seuils,
+ * construction de la ligne "date;temp;pression;humidité;luminosité;lat;lon;alt" et écriture sur la SD.
+ * Gère aussi les erreurs associées (capteur, GPS, SD, données incohérentes).
  */
 void measure_cycle(void)
 {

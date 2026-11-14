@@ -7,6 +7,13 @@
 #include "modes.h"
 #include "setup.h"
 
+/*
+ * main : point d'entrée du programme.
+ * Initialise le matériel (horloge, I2C, SPI, UART), charge les paramètres sauvegardés en flash,
+ * initialise les périphériques (LED, boutons, BME280, ADC, RTC, carte SD), choisit le mode de départ
+ * (configuration si le bouton rouge est enfoncé au démarrage, sinon standard),
+ * puis boucle indéfiniment : gestion des modes, erreurs, GPS, affichage, commandes console et mesures.
+ */
 int main(void)
 {
     Global_Init();
